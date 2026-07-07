@@ -35,6 +35,21 @@ async function calcSHA256(inputString) {
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', data)).toHex();
   return hash;
 }
+
+// TODO: check this non-async minimal version:
+//function ArraybufferToBase64(data) {
+//  return btoa(String.fromCharCode(...new Uint8Array(data)));
+//}
+// or this:
+//function ArraybufferToBase64(data) {
+//  let binary = '';
+//  const bytes = new Uint8Array(data);
+//  const len = bytes.byteLength;
+//  for (let i = 0; i < len; i++) {
+//    binary += String.fromCharCode(bytes[i]);
+//  }
+//  return btoa(binary);
+//}
 async function ArraybufferToBase64(data) {
   const base64url = await new Promise((r) => {
     const reader = new FileReader();
@@ -43,6 +58,25 @@ async function ArraybufferToBase64(data) {
   });
   return base64url.split(",", 2)[1];
 };
+async function ArraybufferToBase32(data) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const bytes = new Uint8Array(data);
+  let bits = 0;
+  let value = 0;
+  let output = "";
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      output += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    output += alphabet[(value << (5 - bits)) & 31];
+  }
+  return output;
+}
 
 async function encrypt(inputString, passkeyString, withSalt) {
   const Module = await EmscrJSR_openssl();
@@ -119,8 +153,10 @@ generateBtn.addEventListener('click', async () => {
     console.debug(`generateBtn onclick(): inputTime is ${inputTime}`);
     // const uuid 
     let password = await encrypt(`${projectorCode}:${inputTime}`, uuid, false);
-    password = await ArraybufferToBase64(password);
+    //password = await ArraybufferToBase64(password);
+    password = await ArraybufferToBase32(password);
     password = password.substring(0, 10); // Shorten it
+    password = password.toUpperCase();
     console.log(`password is ${password}`);
     passwordOutput.textContent = `HDCP Password: ${password}`;
     passwordOutput.style.color = "#327c34";
