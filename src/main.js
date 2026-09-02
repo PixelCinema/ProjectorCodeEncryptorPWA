@@ -82,7 +82,7 @@ async function encrypt(inputString, passkeyString, withSalt) {
   const Module = await EmscrJSR_openssl();
   Module.FS.writeFile("/input.txt", inputString);
   const opensslArgs = ['enc', '-aes-256-cbc', '-in', 'input.txt', '-out', 'output.txt', withSalt ? '-salt': '-nosalt', '-pass', `pass:${passkeyString}`];
-  console.debug(`running openssl with args: ${opensslArgs}`);
+  console.debug(`running openssl with args: ${opensslArgs}\ninput.txt contains: ${inputString}`);
   const result = Module.callMain(opensslArgs);
   if (result == 0) {
       return Module.FS.readFile("/output.txt");
