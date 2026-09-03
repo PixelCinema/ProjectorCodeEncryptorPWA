@@ -29,6 +29,49 @@ togglePassword.addEventListener('click', () => {
   togglePassword.textContent = type === 'password' ? '👁️' : '👁️‍🗨️';
 });
 
+function getMidnightInTimeZone(input, timeZone = "Asia/Tehran") {
+  const inputDate = (input instanceof Date) ? input : new Date(input);
+  //const [year, month, day] = dateString.split("-").map(Number);
+  // 1. Initial guess: Treat the date and time as pure UTC
+  //let targetUtcTimestamp = Date.UTC(year, month - 1, day, 0, 0, 0);
+  let targetUtcTimestamp = inputDate.getTime()
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false,
+  });
+  // Helper to extract the local representation in the target time zone
+  function getParts(timestamp) {
+    const parts = formatter.formatToParts(new Date(timestamp));
+    const obj = {};
+    for (const { type, value } of parts) {
+      obj[type] = parseInt(value, 10);
+    }
+    // formatToParts with hour12: false can return 24 for midnight
+    if (obj.hour === 24) obj.hour = 0;
+    return obj;
+  }
+  // 2. Measure what time our guess renders as in Asia/Tehran
+  const p = getParts(targetUtcTimestamp);
+  const guessedLocalTimestamp = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  // 3. Offset adjustment
+  const offset = guessedLocalTimestamp - targetUtcTimestamp;
+  targetUtcTimestamp -= offset;
+  console.debug(`getMidnightInTimeZone(...): offset = ${offset}`);
+  // 4. Verification step (handles edge cases around DST transitions)
+  const verify = getParts(targetUtcTimestamp);
+  const verifyLocalTimestamp = Date.UTC(verify.year, verify.month - 1, verify.day, verify.hour, verify.minute, verify.second);
+  //const secondPassOffset = verifyLocalTimestamp - Date.UTC(year, month - 1, day, 0, 0, 0);
+  const secondPassOffset = verifyLocalTimestamp - inputDate.getTime();
+  console.debug(`getMidnightInTimeZone(...): secondPassOffset = ${secondPassOffset}`);
+  return new Date(targetUtcTimestamp - secondPassOffset);
+}
+
 async function calcSHA256(inputString) {
   const encoder = new TextEncoder();
   const data = encoder.encode(inputString);
@@ -117,13 +160,39 @@ loginBtn.addEventListener('click', login);
 });
 
 generateBtn.addEventListener('click', async () => {
+  if (! document.getElementById('dateInput').value) {
+    document.getElementById('dateInput').value = (() => {
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Tehran',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+      });
+      // en-CA also produces YYYY-MM-DD
+      return formatter.format(now);
+    })();
+  }
+  if (! document.getElementById('hourInput').value.trim()) {
+    document.getElementById('hourInput').value = (() => {
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Tehran',
+          hour: '2-digit',
+          hour12: false,
+      });
+      // en-CA also produces YYYY-MM-DD
+      return formatter.format(now);
+    })();
+  }
+
   const projectorCode = document.getElementById('projectorCode').value.trim();
   const date = document.getElementById('dateInput').value;
   const hour = parseInt(document.getElementById('hourInput').value.trim(), 10);
   const uuid = document.getElementById('uuid').value.trim();
 
-  if (!projectorCode || !date || isNaN(hour) || !uuid) {
-    passwordOutput.textContent = "All fields must be filled out.";
+  if (!projectorCode || !uuid) {
+    passwordOutput.textContent = `"Projector Code" and "Server UUID" fields must be filled out.`;
     passwordOutput.style.color = "#ff6b6b";
     copyBtn.style.display = "none";
     return;
@@ -148,10 +217,16 @@ generateBtn.addEventListener('click', async () => {
   }
 
   try {
-    // let password = await calcSHA256()
-    console.debug(`doing Date("${date} 00:00:00")`);
-    const inputTime = new Date(`${date} 00:00:00`).getTime() + (hour * 60 * 60 * 1000);
-    console.debug(`generateBtn onclick(): inputTime is ${inputTime}`);
+    //if (date) {
+    console.debug(`generateBtn onClick(): doing getMidnightInTimeZone("${date}T00:00:00Z").getTime() + ...`);
+    const inputTime = getMidnightInTimeZone(`${date}T00:00:00Z`).getTime() + (hour * 60 * 60 * 1000);
+    console.debug(`generateBtn onClick(): inputTime is ${inputTime}`);
+    //} else {
+    //    const now = new Date()
+    //    if (hour) {
+    //    const inputTime = getMidnightInTimeZone(`${date}T00:00:00Z`).getTime() + (hour * 60 * 60 * 1000);
+    //    console.debug(`generateBtn onClick(): inputTime is ${inputTime}`);
+    //}
     // const uuid 
     let password = await encrypt(`${projectorCode}:${inputTime}`, uuid, false);
     //password = await ArraybufferToBase64(password);
