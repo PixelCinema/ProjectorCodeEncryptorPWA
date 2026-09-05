@@ -1,0 +1,166 @@
+name: Test Cross-Platform Android Build 3
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      targets:
+        type: string
+        description: "Comma-separated architectures to build (aarch64, armv7, i686, x86_64)"
+        default: "aarch64"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build (${{ matrix.os }} - ${{ matrix.installer }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        #os: [ubuntu-latest, macos-latest, windows-latest]
+        #os: [ubuntu-latest, windows-latest]
+        os: [macos-latest]
+        installer: [npm-global, npm, yarn, bun, deno]
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Resolve Architectures and Toolchains
+        id: targets
+        run: |
+          RAW_TARGETS="${{ github.event.inputs.targets }}"
+          if [ -z "$RAW_TARGETS" ]; then
+            RAW_TARGETS="aarch64,armv7,i686,x86_64"
+          fi
+          RUST_TARGETS=()
+          TAURI_ARGS=()
+          IFS=',' read -ra ARCH_LIST <<< "$(echo "$RAW_TARGETS" | tr -d ' ')"
+          for arch in "${ARCH_LIST[@]}"; do
+            case "$arch" in
+              aarch64|arm64|arm64-v8a)
+                RUST_TARGETS+=("aarch64-linux-android")
+                TAURI_ARGS+=("--target" "aarch64")
+                ;;
+              armv7|armeabi-v7a)
+                RUST_TARGETS+=("armv7-linux-androideabi")
+                TAURI_ARGS+=("--target" "armv7")
+                ;;
+              i686|x86)
+                RUST_TARGETS+=("i686-linux-android")
+                TAURI_ARGS+=("--target" "i686")
+                ;;
+              x86_64|x86-64)
+                RUST_TARGETS+=("x86_64-linux-android")
+                TAURI_ARGS+=("--target" "x86_64")
+                ;;
+            esac
+          done
+          echo "rust_targets=$(IFS=','; echo "${RUST_TARGETS[*]}")" >> "$GITHUB_OUTPUT"
+          echo "tauri_args=${TAURI_ARGS[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: "zulu"
+          java-version: "21"
+
+      - name: Setup Bun
+        if: matrix.installer == 'bun'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Deno
+        if: matrix.installer == 'deno'
+        uses: denoland/setup-deno@v2
+
+      - name: Resolve Latest NDK Version
+        id: ndk_version
+        run: |
+          LATEST_NDK="29.0.14206865"
+          echo "version=${LATEST_NDK}" >> "$GITHUB_OUTPUT"
+
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "ndk;${{ steps.ndk_version.outputs.version }}"
+
+      - name: Set NDK environment variable
+        run: |
+          SDK_DIR="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          echo "SDK DIR IS $SDK_DIR!!"
+          echo "NDK_HOME=${SDK_DIR}/ndk/${{ steps.ndk_version.outputs.version }}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${SDK_DIR}/ndk/${{ steps.ndk_version.outputs.version }}" >> "$GITHUB_ENV"
+
+      - name: Install Rust Toolchain (Selected Targets Only)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ steps.targets.outputs.rust_targets }}
+
+      #- name: Cache Rust Dependencies
+      #  uses: swatinem/rust-cache@v2
+
+      # --- Tauri CLI Installation Variants ---
+
+      - name: Install Tauri CLI (Global npm)
+        if: matrix.installer == 'npm-global'
+        run: npm install -g @tauri-apps/cli
+
+      - name: Install Tauri CLI (Project-level npm)
+        if: matrix.installer == 'npm'
+        run: npm install @tauri-apps/cli
+
+      - name: Install Tauri CLI (yarn)
+        if: matrix.installer == 'yarn'
+        run: |
+          corepack enable
+          yarn add @tauri-apps/cli
+
+      - name: Install Tauri CLI (bun)
+        if: matrix.installer == 'bun'
+        run: bun add @tauri-apps/cli
+
+      - name: Install Tauri CLI (deno)
+        if: matrix.installer == 'deno'
+        run: |
+          deno install --global -A -f -n tauri npm:@tauri-apps/cli
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      #- name: Install Tauri CLI (cargo)
+      #  if: matrix.installer == 'cargo'
+      #  run: cargo install tauri-cli --locked
+
+      # ---------------------------------------
+
+      - name: Setup Android Signing Credentials
+        if: env.ANDROID_KEY_BASE64 != ''
+        env:
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p src-tauri/gen/android
+          cd src-tauri/gen/android
+          echo "keyAlias=${ANDROID_KEY_ALIAS}" > keystore.properties
+          echo "password=${ANDROID_KEY_PASSWORD}" >> keystore.properties
+          base64 -d <<< "${ANDROID_KEY_BASE64}" > "$RUNNER_TEMP/keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+
+      - name: Build & Release with Tauri Action
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NDK_HOME: ${{ env.NDK_HOME }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        with:
+          args: --split-per-abi ${{ steps.targets.outputs.tauri_args }}
+          mobile: android

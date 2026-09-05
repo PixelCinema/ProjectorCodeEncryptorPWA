@@ -18,6 +18,8 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    env:
+      HAS_ANDROID_SIGNING: ${{ secrets.ANDROID_KEY_BASE64 != '' }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@v7
@@ -94,20 +96,45 @@ jobs:
 
       - name: Cache Rust Dependencies
         uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
 
       - name: Setup Android Signing Credentials
-        if: env.ANDROID_KEY_BASE64 != ''
+        # `if: secrets.ANDROID_KEY_BASE64 != ''` -> didn't worked
+        # `if: ${{ secrets.ANDROID_KEY_BASE64 != '' }}` -> didn't worked
+        # # `if: env.HAS_ANDROID_SIGNING == 'true'` + toplevel env block with `HAS_ANDROID_SIGNING: ${{ secrets.ANDROID_KEY_BASE64 != '' }}` -> always skips even if "secrets.ANDROID_KEY_BASE64" exists
+        #if: env.HAS_ANDROID_SIGNING == 'true'
         env:
-          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_JKS_BASE64: ${{ secrets.ANDROID_KEY_JKS_BASE64 }}
+          ANDROID_KEY_JKS_ALIAS: ${{ secrets.ANDROID_KEY_JKS_ALIAS }}
+          ANDROID_KEY_JKS_PASSWORD: ${{ secrets.ANDROID_KEY_JKS_PASSWORD }}
+          ANDROID_KEY_P12_BASE64: ${{ secrets.ANDROID_KEY_P12_BASE64 }}
+          ANDROID_KEY_P12_ALIAS: ${{ secrets.ANDROID_KEY_P12_ALIAS }}
+          ANDROID_KEY_P12_PASSWORD: ${{ secrets.ANDROID_KEY_P12_PASSWORD }}
         run: |
           mkdir -p src-tauri/gen/android
           cd src-tauri/gen/android
-          echo "keyAlias=${ANDROID_KEY_ALIAS}" > keystore.properties
-          echo "password=${ANDROID_KEY_PASSWORD}" >> keystore.properties
-          base64 -d <<< "${ANDROID_KEY_BASE64}" > "$RUNNER_TEMP/keystore.jks"
-          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+          if [ -n "$ANDROID_KEY_JKS_BASE64" ] && [ -n "$ANDROID_KEY_JKS_ALIAS" ]; then
+            echo "Using provided JKS key..."
+            echo "keyAlias=${ANDROID_KEY_JKS_ALIAS}" > keystore.properties
+            # TODO: test this with empty password to see if this actually works
+            if [ -n "$ANDROID_KEY_JKS_PASSWORD" ]; then
+              echo "password=${ANDROID_KEY_JKS_PASSWORD}" >> keystore.properties
+            fi
+            base64 -d <<< "${ANDROID_KEY_JKS_BASE64}" > "$RUNNER_TEMP/keystore.jks"
+            echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+          elif [ -n "$ANDROID_KEY_P12_BASE64" ] && [ -n "$ANDROID_KEY_P12_ALIAS" ]; then
+            echo "Using provided P12 key..."
+            echo "keyAlias=${ANDROID_KEY_P12_ALIAS}" > keystore.properties
+            # TODO: test this with empty password to see if this actually works
+            if [ -n "$ANDROID_KEY_P12_PASSWORD" ]; then
+              echo "password=${ANDROID_KEY_P12_PASSWORD}" >> keystore.properties
+            fi
+            base64 -d <<< "${ANDROID_KEY_P12_BASE64}" > "$RUNNER_TEMP/keystore.p12"
+            echo "storeFile=$RUNNER_TEMP/keystore.p12" >> keystore.properties
+          else
+            echo something goes wrong
+          fi
 
       - name: Build & Release with Tauri Action
         uses: tauri-apps/tauri-action@v1

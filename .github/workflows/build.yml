@@ -5,18 +5,18 @@ on:
   #    - develop
   workflow_dispatch:
     inputs:
-        name:
-          type: choice
-          description: Which JS engine to be used(does not work)
-          default: 'bun'
-          required: true
-          options:
-          - node
-          - bun
-        targets:
-          type: string
-          description: "comma-seperated list of tagets embeded in apk(possible values: aarch64, armv7, i686, x86_64)"
-          default: "aarch64"
+      name:
+        type: choice
+        description: Which JS engine to be used(does not work)
+        default: 'bun'
+        required: true
+        options:
+        - node
+        - bun
+      targets:
+        type: string
+        description: "comma-seperated list of tagets embeded in apk(possible values: aarch64, armv7, i686, x86_64)"
+        default: "aarch64"
 permissions:
   contents: write
 env:

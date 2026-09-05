@@ -36,19 +36,23 @@ open class BuildTask : DefaultTask() {
 
         // Otherwise assume the user made `tauri` available on PATH themselves
         // (cargo install, a *global* npm/yarn/pnpm/bun install, or a manual
-        // install). We deliberately do NOT search any hardcoded/well-known
-        // install directories such as `~/.cargo/bin` — that is the user's
-        // responsibility.
-        try {
-            runTauriCli("tauri", rootDir)
-        } catch (e: Exception) {
+        // install).
+        val candidates = if (isWindows) {
             // Windows resolves a bare "tauri" to "tauri.exe" automatically,
             // but never to "tauri.cmd" - which is what global JS package
             // managers create - so retry explicitly with that extension.
-            if (isWindows) {
-                runTauriCli("tauri.cmd", rootDir)
-            } else {
-                throw e
+            listOf("tauri", "tauri.cmd", "cargo-tauri", "cargo-tauri.cmd")
+        } else {
+            listOf("tauri", "cargo-tauri")
+        }
+        for ((index, cmd) in candidates.withIndex()) {
+            try {
+                runTauriCli(cmd, rootDir)
+                return
+            } catch (e: Exception) {
+                if (index == candidates.lastIndex) {
+                    throw e
+                }
             }
         }
     }
