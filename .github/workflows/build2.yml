@@ -1,0 +1,124 @@
+name: Build and Release Android Version 2
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      targets:
+        type: string
+        description: "Comma-separated architectures to build (aarch64, armv7, i686, x86_64)"
+        default: "aarch64"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Resolve Architectures and Toolchains
+        id: targets
+        run: |
+          RAW_TARGETS="${{ github.event.inputs.targets }}"
+          if [ -z "$RAW_TARGETS" ]; then
+            RAW_TARGETS="aarch64,armv7,i686,x86_64"
+          fi
+          RUST_TARGETS=()
+          TAURI_ARGS=()
+          IFS=',' read -ra ARCH_LIST <<< "$(echo "$RAW_TARGETS" | tr -d ' ')"
+          for arch in "${ARCH_LIST[@]}"; do
+            case "$arch" in
+              aarch64|arm64|arm64-v8a)
+                RUST_TARGETS+=("aarch64-linux-android")
+                TAURI_ARGS+=("--target" "aarch64")
+                ;;
+              armv7|armeabi-v7a)
+                RUST_TARGETS+=("armv7-linux-androideabi")
+                TAURI_ARGS+=("--target" "armv7")
+                ;;
+              i686|x86)
+                RUST_TARGETS+=("i686-linux-android")
+                TAURI_ARGS+=("--target" "i686")
+                ;;
+              x86_64|x86-64)
+                RUST_TARGETS+=("x86_64-linux-android")
+                TAURI_ARGS+=("--target" "x86_64")
+                ;;
+            esac
+          done
+          echo "rust_targets=$(IFS=','; echo "${RUST_TARGETS[*]}")" >> "$GITHUB_OUTPUT"
+          echo "tauri_args=${TAURI_ARGS[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: "zulu"
+          java-version: "21"
+
+      - name: Resolve Latest NDK Version
+        id: ndk_version
+        run: |
+          LATEST_NDK=$(sdkmanager --list 2>/dev/null | grep -oP 'ndk;[0-9.]+' | sort -V | tail -n 1 | cut -d';' -f2)
+          if [ -z "$LATEST_NDK" ]; then
+            LATEST_NDK="29.0.14206865"
+            echo "[WARNING]: could not detect latest NDK version, falling back to $LATEST_NDK"
+          fi
+          echo "version=${LATEST_NDK}" >> "$GITHUB_OUTPUT"
+          echo "NDK_HOME=/usr/local/lib/android/sdk/ndk/${LATEST_NDK}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/${LATEST_NDK}" >> "$GITHUB_ENV"
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "ndk;${{ steps.ndk_version.outputs.version }}"
+      #- name: Cache NDK
+      #  id: cache-ndk
+      #  uses: actions/cache@v4
+      #  with:
+      #    path: /usr/local/lib/android/sdk/ndk/${{ steps.ndk_version.outputs.version }}
+      #    key: ndk-${{ runner.os }}-${{ steps.ndk_version.outputs.version }}
+      #- name: Install Latest NDK
+      #  if: steps.cache-ndk.outputs.cache-hit != 'true'
+      #  run: |
+      #    echo "y" | sdkmanager "ndk;${{ steps.ndk_version.outputs.version }}"
+
+      - name: Install Rust Toolchain (Selected Targets Only)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ steps.targets.outputs.rust_targets }}
+
+      - name: Cache Rust Dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Setup Android Signing Credentials
+        if: env.ANDROID_KEY_BASE64 != ''
+        env:
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p src-tauri/gen/android
+          cd src-tauri/gen/android
+          echo "keyAlias=${ANDROID_KEY_ALIAS}" > keystore.properties
+          echo "password=${ANDROID_KEY_PASSWORD}" >> keystore.properties
+          base64 -d <<< "${ANDROID_KEY_BASE64}" > "$RUNNER_TEMP/keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+
+      - name: Build & Release with Tauri Action
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NDK_HOME: ${{ env.NDK_HOME }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        with:
+          tagName: ${{ github.event_name == 'workflow_dispatch' && 'nightly' || github.ref_name }}
+          releaseName: ${{ github.event_name == 'workflow_dispatch' && 'Nightly' || github.ref_name }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
+          releaseDraft: false
+          args: --split-per-abi ${{ steps.targets.outputs.tauri_args }}
+          mobile: android
