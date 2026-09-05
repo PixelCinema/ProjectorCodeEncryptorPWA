@@ -17,56 +17,62 @@ open class BuildTask : DefaultTask() {
     @TaskAction
     fun assemble() {
         val rootDirRel = rootDirRel ?: throw GradleException("rootDirRel cannot be null")
+        val rootDir = File(project.projectDir, rootDirRel)
+        val isWindows = Os.isFamily(Os.FAMILY_WINDOWS)
+
+        // If `tauri` was installed as a *local* project dependency, npm, yarn,
+        // pnpm and bun all behave identically: they create a shim inside
+        // `node_modules/.bin`. It is never placed on PATH, so it must be
+        // located relative to the project instead.
+        val localBin = File(
+            rootDir,
+            if (isWindows) "node_modules/.bin/tauri.cmd" else "node_modules/.bin/tauri"
+        )
+
+        if (localBin.exists()) {
+            runTauriCli(localBin.absolutePath, rootDir)
+            return
+        }
+
+        // Otherwise assume the user made `tauri` available on PATH themselves
+        // (cargo install, a *global* npm/yarn/pnpm/bun install, or a manual
+        // install). We deliberately do NOT search any hardcoded/well-known
+        // install directories such as `~/.cargo/bin` — that is the user's
+        // responsibility.
+        try {
+            runTauriCli("tauri", rootDir)
+        } catch (e: Exception) {
+            // Windows resolves a bare "tauri" to "tauri.exe" automatically,
+            // but never to "tauri.cmd" - which is what global JS package
+            // managers create - so retry explicitly with that extension.
+            if (isWindows) {
+                runTauriCli("tauri.cmd", rootDir)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private fun runTauriCli(executable: String, rootDir: File) {
         val target = target ?: throw GradleException("target cannot be null")
         val release = release ?: throw GradleException("release cannot be null")
 
-        val workingDir = File(project.projectDir, rootDirRel)
-
-        val baseArgs = mutableListOf("android", "android-studio-script")
+        val args = mutableListOf("android", "android-studio-script")
         if (project.logger.isEnabled(LogLevel.DEBUG)) {
-            baseArgs.add("-vv")
+            args.add("-vv")
         } else if (project.logger.isEnabled(LogLevel.INFO)) {
-            baseArgs.add("-v")
+            args.add("-v")
         }
         if (release) {
-            baseArgs.add("--release")
+            args.add("--release")
         }
-        baseArgs.addAll(listOf("--target", target))
+        args.add("--target")
+        args.add(target)
 
-        // Fully-typed candidates checking global CLI, package managers, and Cargo
-        val candidates: List<Pair<String, List<String>>> = listOf(
-            Pair("tauri", emptyList()),
-            Pair("npx", listOf("--no-install", "tauri")),
-            Pair("npm", listOf("run", "--", "tauri")),
-            Pair("pnpm", listOf("tauri")),
-            Pair("yarn", listOf("tauri")),
-            Pair("bun", listOf("tauri")),
-            Pair("cargo", listOf("tauri"))
-        )
-
-        for ((bin, prefixArgs) in candidates) {
-            val fullArgs = prefixArgs + baseArgs
-            if (execCommand(workingDir, bin, fullArgs)) {
-                return
-            }
-        }
-
-        throw GradleException("Failed to run Tauri CLI. Ensure 'tauri' or your package manager is installed and in PATH.")
-    }
-
-    private fun execCommand(workingDir: File, executable: String, args: List<String>): Boolean {
-        val extensions = if (Os.isFamily(Os.FAMILY_WINDOWS)) listOf("", ".cmd", ".exe") else listOf("")
-        for (ext in extensions) {
-            val targetBin = if (executable.endsWith(".cmd") || executable.endsWith(".exe")) executable else "$executable$ext"
-            try {
-                project.exec {
-                    workingDir(workingDir)
-                    executable(targetBin)
-                    args(args)
-                }.assertNormalExitValue()
-                return true
-            } catch (ignored: Exception) {}
-        }
-        return false
+        project.exec {
+            workingDir(rootDir)
+            executable(executable)
+            args(args)
+        }.assertNormalExitValue()
     }
 }
