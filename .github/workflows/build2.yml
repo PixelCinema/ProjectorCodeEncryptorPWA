@@ -134,6 +134,7 @@ jobs:
             echo "storeFile=$RUNNER_TEMP/keystore.p12" >> keystore.properties
           else
             echo something goes wrong
+            exit 1
           fi
 
       - name: Build & Release with Tauri Action
