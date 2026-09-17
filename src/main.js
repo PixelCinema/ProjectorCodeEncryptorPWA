@@ -72,13 +72,6 @@ function getMidnightInTimeZone(input, timeZone = "Asia/Tehran") {
   return new Date(targetUtcTimestamp - secondPassOffset);
 }
 
-async function calcSHA256(inputString) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(inputString);
-  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', data)).toHex();
-  return hash;
-}
-
 // TODO: check this non-async minimal version:
 //function ArraybufferToBase64(data) {
 //  return btoa(String.fromCharCode(...new Uint8Array(data)));
@@ -120,6 +113,10 @@ async function ArraybufferToBase32(data) {
   }
   return output;
 }
+function bytesToHex(bytes) {
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
 
 async function encrypt(inputString, passkeyString, withSalt) {
   const Module = await EmscrJSR_openssl();
@@ -230,9 +227,13 @@ generateBtn.addEventListener('click', async () => {
     // const uuid 
     let password = await encrypt(`${projectorCode}:${inputTime}`, uuid, false);
     //password = await ArraybufferToBase64(password);
-    password = await ArraybufferToBase32(password);
-    password = password.substring(0, 10); // Shorten it
-    password = password.toUpperCase();
+    //password = await ArraybufferToBase32(password);
+    //password = password.substring(0, 10);
+    //password = password.toUpperCase();
+    // Build BigInt directly from bytes (Big-Endian)
+    password = password.reduce((acc, byte) => (acc << 8n) | BigInt(byte), 0n)
+                        .toString()
+                        .slice(0, 10);
     console.log(`password is ${password}`);
     passwordOutput.textContent = `HDCP Password: ${password}`;
     passwordOutput.style.color = "#327c34";
