@@ -186,7 +186,7 @@ generateBtn.addEventListener('click', async () => {
     })();
   }
 
-  const projectorCode = document.getElementById('projectorCode').value.trim();
+  const projectorCode = document.getElementById('projectorCode').value.trim().toUpperCase();
   const date = document.getElementById('dateInput').value;
   const hour = parseInt(document.getElementById('hourInput').value.trim(), 10);
   const uuid = document.getElementById('uuid').value.trim();
